@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>16-Bit Candy Crush</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const GRID_SIZE = 8;
+        const TILE_SIZE = 50;
+        const CANDY_TYPES = 6;
+
+        // Sound Generator Class
+        class SoundGenerator {
+          constructor() {
+            this.audioContext = null;
+            this.soundEnabled = true;
+          }
+
+          init() {
+            if (!this.audioContext) {
+              this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+          }
+
+          playTone(frequency, duration, type = 'sine', volume = 0.3) {
+            if (!this.soundEnabled || !this.audioContext) return;
+
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, this.audioContext.currentTime);
+
+            gainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
+
+            oscillator.start(this.audioContext.currentTime);
+            oscillator.stop(this.audioContext.currentTime + duration);
+          }
+
+          playSwap() {
+            this.init();
+            this.playTone(400, 0.1, 'square', 0.2);
+          }
+
+          playMatch(matchCount) {
+            this.init();
+            const baseFreq = 600;
+            const notes = [0, 200, 400, 600];
+            
+            notes.slice(0, Math.min(matchCount, 4)).forEach((offset, i) => {
+              setTimeout(() => {
+                this.playTone(baseFreq + offset, 0.15, 'square', 0.25);
+              }, i * 50);
+            });
+          }
+
+          playDrop() {
+            this.init();
+            const startFreq = 800;
+            const endFreq = 400;
+            const duration = 0.2;
+
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(startFreq, this.audioContext.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(endFreq, this.audioContext.currentTime + duration);
+
+            gainNode.gain.setValueAtTime(0.15, this.audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
+
+            oscillator.start(this.audioContext.currentTime);
+            oscillator.stop(this.audioContext.currentTime + duration);
+          }
+
+          playGameOver() {
+            this.init();
+            const notes = [800, 700, 600, 500, 400];
+            notes.forEach((freq, i) => {
+              setTimeout(() => {
+                this.playTone(freq, 0.3, 'triangle', 0.2);
+              }, i * 150);
+            });
+          }
+
+          playSuccess() {
+            this.init();
+            const notes = [523, 659, 784, 1047];
+            notes.forEach((freq, i) => {
+              setTimeout(() => {
+                this.playTone(freq, 0.2, 'sine', 0.2);
+              }, i * 100);
+            });
+          }
+
+          toggleSound() {
+            this.soundEnabled = !this.soundEnabled;
+            return this.soundEnabled;
+          }
+        }
+
+        const CandyCrush16Bit = () => {
+          const canvasRef = useRef(null);
+          const soundRef = useRef(new SoundGenerator());
+          const [score, setScore] = useState(0);
+          const [moves, setMoves] = useState(30);
+          const [selectedTile, setSelectedTile] = useState(null);
+          const [isAnimating, setIsAnimating] = useState(false);
+          const [gameOver, setGameOver] = useState(false);
+          const [soundEnabled, setSoundEnabled] = useState(true);
+          const gridRef = useRef([]);
+
+          useEffect(() => {
+            initializeGrid();
+          }, []);
+
+          const initializeGrid = () => {
+            const newGrid = [];
+            for (let row = 0; row < GRID_SIZE; row++) {
+              newGrid[row] = [];
+              for (let col = 0; col < GRID_SIZE; col++) {
+                newGrid[row][col] = Math.floor(Math.random() * CANDY_TYPES);
+              }
+            }
+            gridRef.current = newGrid;
+            removeInitialMatches();
+          };
+
+          const removeInitialMatches = () => {
+            let hasMatches = true;
+            let iterations = 0;
+            while (hasMatches && iterations < 100) {
+              hasMatches = false;
+              const matches = findAllMatches();
+              if (matches.length > 0) {
+                matches.forEach(({ row, col }) => {
+                  gridRef.current[row][col] = Math.floor(Math.random() * CANDY_TYPES);
+                });
+                hasMatches = true;
+              }
+              iterations++;
+            }
+            drawGrid();
+          };
+
+          const findAllMatches = () => {
+            const matches = [];
+            const marked = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(false));
+
+            for (let row = 0; row < GRID_SIZE; row++) {
+              for (let col = 0; col < GRID_SIZE - 2; col++) {
+                const candy = gridRef.current[row][col];
+                if (candy === -1) continue;
+
+                let count = 1;
+                while (col + count < GRID_SIZE && gridRef.current[row][col + count] === candy) {
+                  count++;
+                }
+
+                if (count >= 3) {
+                  for (let i = 0; i < count; i++) {
+                    if (!marked[row][col + i]) {
+                      matches.push({ row, col: col + i });
+                      marked[row][col + i] = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            for (let col = 0; col < GRID_SIZE; col++) {
+              for (let row = 0; row < GRID_SIZE - 2; row++) {
+                const candy = gridRef.current[row][col];
+                if (candy === -1) continue;
+
+                let count = 1;
+                while (row + count < GRID_SIZE && gridRef.current[row + count][col] === candy) {
+                  count++;
+                }
+
+                if (count >= 3) {
+                  for (let i = 0; i < count; i++) {
+                    if (!marked[row + i][col]) {
+                      matches.push({ row: row + i, col });
+                      marked[row + i][col] = true;
+                    }
+                  }
+                }
+              }
+            }
+
+            return matches;
+          };
+
+          const drawGrid = () => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#2a1a4a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let row = 0; row < GRID_SIZE; row++) {
+              for (let col = 0; col < GRID_SIZE; col++) {
+                const x = col * TILE_SIZE;
+                const y = row * TILE_SIZE;
+                
+                ctx.fillStyle = (row + col) % 2 === 0 ? '#3a2a5a' : '#4a3a6a';
+                ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+                
+                ctx.strokeStyle = '#5a4a7a';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+              }
+            }
+
+            for (let row = 0; row < GRID_SIZE; row++) {
+              for (let col = 0; col < GRID_SIZE; col++) {
+                if (gridRef.current[row][col] !== -1) {
+                  drawCandy(ctx, row, col, gridRef.current[row][col]);
+                }
+              }
+            }
+
+            if (selectedTile) {
+              const x = selectedTile.col * TILE_SIZE;
+              const y = selectedTile.row * TILE_SIZE;
+              ctx.strokeStyle = '#ffff00';
+              ctx.lineWidth = 3;
+              ctx.strokeRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+            }
+          };
+
+          const drawCandy = (ctx, row, col, type) => {
+            const x = col * TILE_SIZE + TILE_SIZE / 2;
+            const y = row * TILE_SIZE + TILE_SIZE / 2;
+            const size = 18;
+
+            const colors = [
+              '#ff4444',
+              '#44ff44',
+              '#4444ff',
+              '#ffff44',
+              '#ff44ff',
+              '#44ffff'
+            ];
+
+            const darkColors = [
+              '#aa0000',
+              '#00aa00',
+              '#0000aa',
+              '#aaaa00',
+              '#aa00aa',
+              '#00aaaa'
+            ];
+
+            ctx.fillStyle = colors[type];
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = darkColors[type];
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.arc(x - 5, y - 5, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = darkColors[type];
+            ctx.fillRect(x - 2, y + size - 5, 4, 2);
+          };
+
+          const handleCanvasClick = (e) => {
+            if (isAnimating || gameOver) return;
+
+            const canvas = canvasRef.current;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const col = Math.floor(x / TILE_SIZE);
+            const row = Math.floor(y / TILE_SIZE);
+
+            if (row >= 0 && row < GRID_SIZE && col >= 0 && col < GRID_SIZE) {
+              if (!selectedTile) {
+                setSelectedTile({ row, col });
+                soundRef.current.playTone(300, 0.05, 'square', 0.15);
+              } else {
+                const rowDiff = Math.abs(selectedTile.row - row);
+                const colDiff = Math.abs(selectedTile.col - col);
+
+                if ((rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1)) {
+                  swapTiles(selectedTile.row, selectedTile.col, row, col);
+                }
+                setSelectedTile(null);
+              }
+            }
+          };
+
+          const swapTiles = (row1, col1, row2, col2) => {
+            const temp = gridRef.current[row1][col1];
+            gridRef.current[row1][col1] = gridRef.current[row2][col2];
+            gridRef.current[row2][col2] = temp;
+
+            drawGrid();
+            soundRef.current.playSwap();
+
+            const matches = findAllMatches();
+            if (matches.length > 0) {
+              setMoves(m => m - 1);
+              processMatches();
+            } else {
+              const temp = gridRef.current[row1][col1];
+              gridRef.current[row1][col1] = gridRef.current[row2][col2];
+              gridRef.current[row2][col2] = temp;
+              drawGrid();
+            }
+          };
+
+          const processMatches = () => {
+            setIsAnimating(true);
+            let totalScore = 0;
+            let totalMatches = 0;
+
+            const processRound = () => {
+              const matches = findAllMatches();
+
+              if (matches.length > 0) {
+                totalScore += matches.length * 10;
+                totalMatches += matches.length;
+                
+                soundRef.current.playMatch(matches.length);
+                
+                matches.forEach(({ row, col }) => {
+                  gridRef.current[row][col] = -1;
+                });
+
+                drawGrid();
+                
+                setTimeout(() => {
+                  soundRef.current.playDrop();
+                  dropCandies();
+                  drawGrid();
+                  
+                  setTimeout(() => {
+                    processRound();
+                  }, 300);
+                }, 200);
+              } else {
+                setScore(s => s + totalScore);
+                if (totalMatches >= 8) {
+                  soundRef.current.playSuccess();
+                }
+                setIsAnimating(false);
+              }
+            };
+
+            processRound();
+          };
+
+          const dropCandies = () => {
+            for (let col = 0; col < GRID_SIZE; col++) {
+              let writeRow = GRID_SIZE - 1;
+              
+              for (let row = GRID_SIZE - 1; row >= 0; row--) {
+                if (gridRef.current[row][col] !== -1) {
+                  gridRef.current[writeRow][col] = gridRef.current[row][col];
+                  if (writeRow !== row) {
+                    gridRef.current[row][col] = -1;
+                  }
+                  writeRow--;
+                }
+              }
+
+              for (let row = writeRow; row >= 0; row--) {
+                gridRef.current[row][col] = Math.floor(Math.random() * CANDY_TYPES);
+              }
+            }
+          };
+
+          const resetGame = () => {
+            setScore(0);
+            setMoves(30);
+            setGameOver(false);
+            setSelectedTile(null);
+            initializeGrid();
+          };
+
+          const toggleSound = () => {
+            const newState = soundRef.current.toggleSound();
+            setSoundEnabled(newState);
+          };
+
+          useEffect(() => {
+            if (moves <= 0 && !isAnimating) {
+              setGameOver(true);
+              soundRef.current.playGameOver();
+            }
+          }, [moves, isAnimating]);
+
+          useEffect(() => {
+            drawGrid();
+          });
+
+          return (
+            <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-purple-700 p-4">
+              <div className="mb-4 text-center">
+                <h1 className="text-4xl font-bold text-yellow-300 mb-2" style={{ textShadow: '3px 3px 0px #000' }}>
+                  16-BIT CANDY CRUSH
+                </h1>
+                <div className="flex gap-8 justify-center text-white text-xl font-bold items-center">
+                  <div className="bg-purple-950 px-6 py-2 border-4 border-purple-400">
+                    SCORE: {score}
+                  </div>
+                  <div className="bg-purple-950 px-6 py-2 border-4 border-purple-400">
+                    MOVES: {moves}
+                  </div>
+                  <button
+                    onClick={toggleSound}
+                    className="bg-purple-950 px-4 py-2 border-4 border-purple-400 hover:bg-purple-800 transition"
+                    title={soundEnabled ? "Sound ON" : "Sound OFF"}
+                  >
+                    {soundEnabled ? "🔊" : "🔇"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative">
+                <canvas
+                  ref={canvasRef}
+                  width={GRID_SIZE * TILE_SIZE}
+                  height={GRID_SIZE * TILE_SIZE}
+                  onClick={handleCanvasClick}
+                  className="border-8 border-purple-400 cursor-pointer shadow-2xl"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+                
+                {gameOver && (
+                  <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center">
+                    <div className="text-center">
+                      <h2 className="text-4xl font-bold text-yellow-300 mb-4" style={{ textShadow: '3px 3px 0px #000' }}>
+                        GAME OVER!
+                      </h2>
+                      <p className="text-2xl text-white mb-6">Final Score: {score}</p>
+                      <button
+                        onClick={resetGame}
+                        className="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-8 text-xl border-4 border-green-700"
+                      >
+                        PLAY AGAIN
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 text-white text-center bg-purple-950 p-4 border-4 border-purple-400 max-w-md">
+                <p className="font-bold mb-2">HOW TO PLAY:</p>
+                <p className="text-sm">Click two adjacent candies to swap them. Match 3 or more of the same color to score points!</p>
+              </div>
+            </div>
+          );
+        };
+
+        ReactDOM.render(<CandyCrush16Bit />, document.getElementById('root'));
+    </script>
+</body>
+</html>
