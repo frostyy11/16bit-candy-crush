@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>16-Bit Candy Crush</title>
+    <title>Candy Crush - Swap Edition</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -13,6 +13,20 @@
             margin: 0;
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+        @keyframes particle-float {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-100px) scale(0); opacity: 0; }
+        }
+        .particle {
+            animation: particle-float 1s ease-out forwards;
+        }
+        @keyframes pulse-glow {
+            0%, 100% { filter: drop-shadow(0 0 5px currentColor); }
+            50% { filter: drop-shadow(0 0 15px currentColor); }
+        }
+        .glow-pulse {
+            animation: pulse-glow 0.5s ease-in-out;
         }
     </style>
 </head>
@@ -26,7 +40,6 @@
         const TILE_SIZE = 50;
         const CANDY_TYPES = 6;
 
-        // Sound Generator Class
         class SoundGenerator {
           constructor() {
             this.audioContext = null;
@@ -66,13 +79,19 @@
           playMatch(matchCount) {
             this.init();
             const baseFreq = 600;
-            const notes = [0, 200, 400, 600];
+            const notes = [0, 200, 400, 600, 800];
             
-            notes.slice(0, Math.min(matchCount, 4)).forEach((offset, i) => {
+            notes.slice(0, Math.min(matchCount, 5)).forEach((offset, i) => {
               setTimeout(() => {
                 this.playTone(baseFreq + offset, 0.15, 'square', 0.25);
               }, i * 50);
             });
+          }
+
+          playCombo(comboCount) {
+            this.init();
+            const freq = 800 + (comboCount * 100);
+            this.playTone(freq, 0.3, 'sine', 0.3);
           }
 
           playDrop() {
@@ -96,6 +115,16 @@
 
             oscillator.start(this.audioContext.currentTime);
             oscillator.stop(this.audioContext.currentTime + duration);
+          }
+
+          playSpecial() {
+            this.init();
+            const notes = [1047, 1319, 1568];
+            notes.forEach((freq, i) => {
+              setTimeout(() => {
+                this.playTone(freq, 0.2, 'sine', 0.3);
+              }, i * 80);
+            });
           }
 
           playGameOver() {
@@ -124,16 +153,21 @@
           }
         }
 
-        const CandyCrush16Bit = () => {
+        const CandyCrush = () => {
           const canvasRef = useRef(null);
           const soundRef = useRef(new SoundGenerator());
           const [score, setScore] = useState(0);
           const [moves, setMoves] = useState(30);
-          const [selectedTile, setSelectedTile] = useState(null);
+          const [dragStart, setDragStart] = useState(null);
+          const [dragCurrent, setDragCurrent] = useState(null);
           const [isAnimating, setIsAnimating] = useState(false);
           const [gameOver, setGameOver] = useState(false);
           const [soundEnabled, setSoundEnabled] = useState(true);
+          const [particles, setParticles] = useState([]);
+          const [comboCount, setComboCount] = useState(0);
+          const [flashCells, setFlashCells] = useState([]);
           const gridRef = useRef([]);
+          const particleIdRef = useRef(0);
 
           useEffect(() => {
             initializeGrid();
@@ -185,7 +219,7 @@
                 if (count >= 3) {
                   for (let i = 0; i < count; i++) {
                     if (!marked[row][col + i]) {
-                      matches.push({ row, col: col + i });
+                      matches.push({ row, col: col + i, type: candy, matchSize: count });
                       marked[row][col + i] = true;
                     }
                   }
@@ -206,7 +240,7 @@
                 if (count >= 3) {
                   for (let i = 0; i < count; i++) {
                     if (!marked[row + i][col]) {
-                      matches.push({ row: row + i, col });
+                      matches.push({ row: row + i, col, type: candy, matchSize: count });
                       marked[row + i][col] = true;
                     }
                   }
@@ -215,6 +249,31 @@
             }
 
             return matches;
+          };
+
+          const createParticles = (row, col, matchSize, type) => {
+            const colors = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff'];
+            const x = col * TILE_SIZE + TILE_SIZE / 2;
+            const y = row * TILE_SIZE + TILE_SIZE / 2;
+            
+            const particleCount = matchSize >= 4 ? 12 : 8;
+            
+            for (let i = 0; i < particleCount; i++) {
+              const angle = (Math.PI * 2 * i) / particleCount;
+              const speed = matchSize >= 4 ? 3 : 2;
+              const id = particleIdRef.current++;
+              
+              setParticles(prev => [...prev, {
+                id,
+                x,
+                y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                color: colors[type],
+                size: matchSize >= 4 ? 8 : 5,
+                life: 1
+              }]);
+            }
           };
 
           const drawGrid = () => {
@@ -230,7 +289,13 @@
                 const x = col * TILE_SIZE;
                 const y = row * TILE_SIZE;
                 
-                ctx.fillStyle = (row + col) % 2 === 0 ? '#3a2a5a' : '#4a3a6a';
+                const isFlashing = flashCells.some(cell => cell.row === row && cell.col === col);
+                
+                if (isFlashing) {
+                  ctx.fillStyle = '#6a5a8a';
+                } else {
+                  ctx.fillStyle = (row + col) % 2 === 0 ? '#3a2a5a' : '#4a3a6a';
+                }
                 ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
                 
                 ctx.strokeStyle = '#5a4a7a';
@@ -242,42 +307,36 @@
             for (let row = 0; row < GRID_SIZE; row++) {
               for (let col = 0; col < GRID_SIZE; col++) {
                 if (gridRef.current[row][col] !== -1) {
-                  drawCandy(ctx, row, col, gridRef.current[row][col]);
+                  if (dragStart && dragCurrent && row === dragStart.row && col === dragStart.col) {
+                    const deltaX = dragCurrent.x - (dragStart.col * TILE_SIZE + TILE_SIZE / 2);
+                    const deltaY = dragCurrent.y - (dragStart.row * TILE_SIZE + TILE_SIZE / 2);
+                    drawCandyWithOffset(ctx, row, col, gridRef.current[row][col], deltaX, deltaY);
+                  } else {
+                    drawCandy(ctx, row, col, gridRef.current[row][col]);
+                  }
                 }
               }
-            }
-
-            if (selectedTile) {
-              const x = selectedTile.col * TILE_SIZE;
-              const y = selectedTile.row * TILE_SIZE;
-              ctx.strokeStyle = '#ffff00';
-              ctx.lineWidth = 3;
-              ctx.strokeRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
             }
           };
 
           const drawCandy = (ctx, row, col, type) => {
-            const x = col * TILE_SIZE + TILE_SIZE / 2;
-            const y = row * TILE_SIZE + TILE_SIZE / 2;
+            drawCandyWithOffset(ctx, row, col, type, 0, 0);
+          };
+
+          const drawCandyWithOffset = (ctx, row, col, type, offsetX, offsetY) => {
+            const x = col * TILE_SIZE + TILE_SIZE / 2 + offsetX;
+            const y = row * TILE_SIZE + TILE_SIZE / 2 + offsetY;
             const size = 18;
 
-            const colors = [
-              '#ff4444',
-              '#44ff44',
-              '#4444ff',
-              '#ffff44',
-              '#ff44ff',
-              '#44ffff'
-            ];
+            const colors = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff', '#44ffff'];
+            const darkColors = ['#aa0000', '#00aa00', '#0000aa', '#aaaa00', '#aa00aa', '#00aaaa'];
 
-            const darkColors = [
-              '#aa0000',
-              '#00aa00',
-              '#0000aa',
-              '#aaaa00',
-              '#aa00aa',
-              '#00aaaa'
-            ];
+            const isFlashing = flashCells.some(cell => cell.row === row && cell.col === col);
+            
+            if (isFlashing) {
+              ctx.shadowBlur = 20;
+              ctx.shadowColor = colors[type];
+            }
 
             ctx.fillStyle = colors[type];
             ctx.beginPath();
@@ -288,6 +347,8 @@
             ctx.lineWidth = 2;
             ctx.stroke();
 
+            ctx.shadowBlur = 0;
+
             ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
             ctx.beginPath();
             ctx.arc(x - 5, y - 5, 5, 0, Math.PI * 2);
@@ -297,7 +358,7 @@
             ctx.fillRect(x - 2, y + size - 5, 4, 2);
           };
 
-          const handleCanvasClick = (e) => {
+          const handleMouseDown = (e) => {
             if (isAnimating || gameOver) return;
 
             const canvas = canvasRef.current;
@@ -309,19 +370,45 @@
             const row = Math.floor(y / TILE_SIZE);
 
             if (row >= 0 && row < GRID_SIZE && col >= 0 && col < GRID_SIZE) {
-              if (!selectedTile) {
-                setSelectedTile({ row, col });
-                soundRef.current.playTone(300, 0.05, 'square', 0.15);
-              } else {
-                const rowDiff = Math.abs(selectedTile.row - row);
-                const colDiff = Math.abs(selectedTile.col - col);
+              setDragStart({ row, col });
+              setDragCurrent({ x, y });
+              soundRef.current.playTone(300, 0.05, 'square', 0.15);
+            }
+          };
 
-                if ((rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1)) {
-                  swapTiles(selectedTile.row, selectedTile.col, row, col);
-                }
-                setSelectedTile(null);
+          const handleMouseMove = (e) => {
+            if (!dragStart || isAnimating || gameOver) return;
+
+            const canvas = canvasRef.current;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            setDragCurrent({ x, y });
+          };
+
+          const handleMouseUp = (e) => {
+            if (!dragStart || isAnimating || gameOver) return;
+
+            const canvas = canvasRef.current;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const col = Math.floor(x / TILE_SIZE);
+            const row = Math.floor(y / TILE_SIZE);
+
+            if (row >= 0 && row < GRID_SIZE && col >= 0 && col < GRID_SIZE) {
+              const rowDiff = Math.abs(dragStart.row - row);
+              const colDiff = Math.abs(dragStart.col - col);
+
+              if ((rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1)) {
+                swapTiles(dragStart.row, dragStart.col, row, col);
               }
             }
+
+            setDragStart(null);
+            setDragCurrent(null);
           };
 
           const swapTiles = (row1, col1, row2, col2) => {
@@ -347,20 +434,36 @@
           const processMatches = () => {
             setIsAnimating(true);
             let totalScore = 0;
-            let totalMatches = 0;
+            let roundCount = 0;
 
             const processRound = () => {
               const matches = findAllMatches();
 
               if (matches.length > 0) {
-                totalScore += matches.length * 10;
-                totalMatches += matches.length;
+                roundCount++;
+                const maxMatchSize = Math.max(...matches.map(m => m.matchSize || 3));
+                const points = matches.length * 10 * (roundCount > 1 ? roundCount : 1);
+                totalScore += points;
                 
-                soundRef.current.playMatch(matches.length);
+                if (maxMatchSize >= 4) {
+                  soundRef.current.playSpecial();
+                } else {
+                  soundRef.current.playMatch(matches.length);
+                }
+
+                if (roundCount > 1) {
+                  soundRef.current.playCombo(roundCount);
+                }
+
+                const flashPositions = matches.map(m => ({ row: m.row, col: m.col }));
+                setFlashCells(flashPositions);
                 
-                matches.forEach(({ row, col }) => {
+                matches.forEach(({ row, col, type, matchSize }) => {
+                  createParticles(row, col, matchSize || 3, type);
                   gridRef.current[row][col] = -1;
                 });
+
+                setTimeout(() => setFlashCells([]), 300);
 
                 drawGrid();
                 
@@ -372,10 +475,10 @@
                   setTimeout(() => {
                     processRound();
                   }, 300);
-                }, 200);
+                }, 400);
               } else {
                 setScore(s => s + totalScore);
-                if (totalMatches >= 8) {
+                if (roundCount >= 3) {
                   soundRef.current.playSuccess();
                 }
                 setIsAnimating(false);
@@ -409,7 +512,10 @@
             setScore(0);
             setMoves(30);
             setGameOver(false);
-            setSelectedTile(null);
+            setDragStart(null);
+            setDragCurrent(null);
+            setParticles([]);
+            setComboCount(0);
             initializeGrid();
           };
 
@@ -429,11 +535,27 @@
             drawGrid();
           });
 
+          useEffect(() => {
+            const interval = setInterval(() => {
+              setParticles(prev => {
+                return prev.map(p => ({
+                  ...p,
+                  x: p.x + p.vx,
+                  y: p.y + p.vy,
+                  vy: p.vy + 0.2,
+                  life: p.life - 0.02
+                })).filter(p => p.life > 0);
+              });
+            }, 16);
+
+            return () => clearInterval(interval);
+          }, []);
+
           return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-purple-700 p-4">
               <div className="mb-4 text-center">
                 <h1 className="text-4xl font-bold text-yellow-300 mb-2" style={{ textShadow: '3px 3px 0px #000' }}>
-                  16-BIT CANDY CRUSH
+                  CANDY CRUSH
                 </h1>
                 <div className="flex gap-8 justify-center text-white text-xl font-bold items-center">
                   <div className="bg-purple-950 px-6 py-2 border-4 border-purple-400">
@@ -457,10 +579,32 @@
                   ref={canvasRef}
                   width={GRID_SIZE * TILE_SIZE}
                   height={GRID_SIZE * TILE_SIZE}
-                  onClick={handleCanvasClick}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={() => {
+                    setDragStart(null);
+                    setDragCurrent(null);
+                  }}
                   className="border-8 border-purple-400 cursor-pointer shadow-2xl"
                   style={{ imageRendering: 'pixelated' }}
                 />
+                
+                {particles.map(p => (
+                  <div
+                    key={p.id}
+                    className="particle absolute rounded-full pointer-events-none"
+                    style={{
+                      left: p.x,
+                      top: p.y,
+                      width: p.size,
+                      height: p.size,
+                      backgroundColor: p.color,
+                      opacity: p.life,
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                  />
+                ))}
                 
                 {gameOver && (
                   <div className="absolute inset-0 bg-black bg-opacity-80 flex items-center justify-center">
@@ -481,14 +625,15 @@
               </div>
 
               <div className="mt-6 text-white text-center bg-purple-950 p-4 border-4 border-purple-400 max-w-md">
-                <p className="font-bold mb-2">HOW TO PLAY:</p>
-                <p className="text-sm">Click two adjacent candies to swap them. Match 3 or more of the same color to score points!</p>
+                <p className="font-bold mb-2">COMO JOGAR:</p>
+                <p className="text-sm">Arraste um doce para trocar com um adjacente. Combine 3 ou mais da mesma cor para pontuar!</p>
+                <p className="text-sm mt-2">✨ Matches de 4+ criam efeitos especiais!</p>
               </div>
             </div>
           );
         };
 
-        ReactDOM.render(<CandyCrush16Bit />, document.getElementById('root'));
+        ReactDOM.render(<CandyCrush />, document.getElementById('root'));
     </script>
 </body>
 </html>
