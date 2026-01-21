@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Candy Crush - Swap Edition</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -13,6 +13,7 @@
             margin: 0;
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            touch-action: none;
         }
         @keyframes particle-float {
             0% { transform: translateY(0) scale(1); opacity: 1; }
@@ -358,14 +359,28 @@
             ctx.fillRect(x - 2, y + size - 5, 4, 2);
           };
 
-          const handleMouseDown = (e) => {
-            if (isAnimating || gameOver) return;
-
+          const getCoordinates = (e) => {
             const canvas = canvasRef.current;
             const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            
+            if (e.touches && e.touches.length > 0) {
+              return {
+                x: e.touches[0].clientX - rect.left,
+                y: e.touches[0].clientY - rect.top
+              };
+            } else {
+              return {
+                x: e.clientX - rect.left,
+                y: e.clientY - rect.top
+              };
+            }
+          };
 
+          const handleStart = (e) => {
+            if (isAnimating || gameOver) return;
+            e.preventDefault();
+
+            const { x, y } = getCoordinates(e);
             const col = Math.floor(x / TILE_SIZE);
             const row = Math.floor(y / TILE_SIZE);
 
@@ -376,25 +391,23 @@
             }
           };
 
-          const handleMouseMove = (e) => {
+          const handleMove = (e) => {
             if (!dragStart || isAnimating || gameOver) return;
+            e.preventDefault();
 
-            const canvas = canvasRef.current;
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
+            const { x, y } = getCoordinates(e);
             setDragCurrent({ x, y });
           };
 
-          const handleMouseUp = (e) => {
+          const handleEnd = (e) => {
             if (!dragStart || isAnimating || gameOver) return;
+            e.preventDefault();
 
-            const canvas = canvasRef.current;
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const coords = e.changedTouches && e.changedTouches.length > 0 
+              ? getCoordinates({ touches: e.changedTouches })
+              : getCoordinates(e);
 
+            const { x, y } = coords;
             const col = Math.floor(x / TILE_SIZE);
             const row = Math.floor(y / TILE_SIZE);
 
@@ -579,15 +592,18 @@
                   ref={canvasRef}
                   width={GRID_SIZE * TILE_SIZE}
                   height={GRID_SIZE * TILE_SIZE}
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
+                  onMouseDown={handleStart}
+                  onMouseMove={handleMove}
+                  onMouseUp={handleEnd}
                   onMouseLeave={() => {
                     setDragStart(null);
                     setDragCurrent(null);
                   }}
+                  onTouchStart={handleStart}
+                  onTouchMove={handleMove}
+                  onTouchEnd={handleEnd}
                   className="border-8 border-purple-400 cursor-pointer shadow-2xl"
-                  style={{ imageRendering: 'pixelated' }}
+                  style={{ imageRendering: 'pixelated', touchAction: 'none' }}
                 />
                 
                 {particles.map(p => (
